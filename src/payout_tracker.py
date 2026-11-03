@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Payout Arrival Tracker v0.1 — Canada-first, local/offline.
+Payout Arrival Tracker v0.1.2 — Canada-first, local/offline.
 
 One job: never let a platform BALANCE be mistaken for MONEY.
 Every figure is sorted into exactly one bucket:
@@ -9,25 +9,30 @@ Every figure is sorted into exactly one bucket:
   STUCK     — balance below the payout threshold, with the distance
   UNKNOWN   — balance whose payout threshold we have not verified
 
-Input: a JSON file of platform entries (see data/engine-money.json).
+Input: a JSON file of platform entries (see data/sample.json).
 Output: a text report; every total in CAD + INR.
 No network, no accounts, no scraping. Python 3 stdlib only. Spend: none.
 
 Usage: python3 payout_tracker.py DATA.json [--today YYYY-MM-DD]
 Exit codes: 0 ok, 1 error.
 """
-import argparse, json, sys
+import argparse, json, math, sys
 from datetime import date, timedelta
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.1.2"
 
 
 def _num(entry, key, default=0.0):
     v = entry.get(key, default)
     if v is None:
         return default
-    v = float(v)
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{entry.get('platform','?')}: {key} must be a number, got {entry.get(key)!r}")
+    if not math.isfinite(v):
+        raise ValueError(f"{entry.get('platform','?')}: {key} must be a finite number, got {v}")
     if v < 0:
         raise ValueError(f"{entry.get('platform','?')}: {key} must be >= 0, got {v}")
     return v
@@ -39,10 +44,18 @@ def validate(entry):
     fx = _num(entry, "fx_to_cad", 0.0)
     if fx <= 0:
         raise ValueError(f"{entry['platform']}: fx_to_cad must be > 0")
-    _num(entry, "balance"); _num(entry, "realized")
-    _num(entry, "fee_pct"); _num(entry, "fee_fixed")
+    balance = _num(entry, "balance"); _num(entry, "realized")
+    fee_pct = _num(entry, "fee_pct")
+    if fee_pct > 100:
+        raise ValueError(f"{entry['platform']}: fee_pct must be between 0 and 100, got {fee_pct}")
+    fee_fixed = _num(entry, "fee_fixed")
+    if fee_fixed > balance:
+        raise ValueError(f"{entry['platform']}: fee_fixed must be <= the balance ({balance}), got {fee_fixed}")
     if entry.get("threshold") is not None:
         _num(entry, "threshold")
+    delay = entry.get("delay_days")
+    if delay is not None and (isinstance(delay, bool) or not isinstance(delay, int) or delay < 0):
+        raise ValueError(f"{entry['platform']}: delay_days must be a non-negative integer, got {delay!r}")
     return entry
 
 
@@ -138,6 +151,33 @@ def render(summary, today, cad_to_inr, source_date):
     return "\n".join(L)
 
 
+def extract(raw):
+    """Pull (entries, cad_to_inr, rates_date) out of the parsed JSON.
+    Structural problems get an error that says what to fix."""
+    if isinstance(raw, list):
+        entries, cad_to_inr, source_date = raw, 67.97, "not recorded"
+    elif isinstance(raw, dict):
+        if "entries" not in raw:
+            raise ValueError('data file has no "entries" list — the top level must look like {"entries": [ ...one object per platform... ]}')
+        entries = raw["entries"]
+        rate = raw.get("cad_to_inr", 67.97)
+        try:
+            cad_to_inr = float(rate)
+        except (TypeError, ValueError):
+            raise ValueError(f"cad_to_inr must be a number, got {rate!r}")
+        if not math.isfinite(cad_to_inr) or cad_to_inr <= 0:
+            raise ValueError(f"cad_to_inr must be > 0, got {cad_to_inr}")
+        source_date = raw.get("rates_date", "not recorded")
+    else:
+        raise ValueError('data file must be a JSON object with an "entries" list (or a bare list of entries)')
+    if not isinstance(entries, list):
+        raise ValueError('"entries" must be a list of entry objects, one per platform')
+    for i, e in enumerate(entries, 1):
+        if not isinstance(e, dict):
+            raise ValueError(f'entry #{i} in "entries" must be an object like {{"platform": "...", "balance": 0}}, got {type(e).__name__}')
+    return entries, cad_to_inr, source_date
+
+
 def main():
     ap = argparse.ArgumentParser(description="Payout Arrival Tracker — realized vs balance, Canada-first")
     ap.add_argument("data")
@@ -149,9 +189,7 @@ def main():
         return 1
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        entries = raw["entries"] if isinstance(raw, dict) else raw
-        cad_to_inr = float(raw.get("cad_to_inr", 67.97)) if isinstance(raw, dict) else 67.97
-        source_date = raw.get("rates_date", "not recorded") if isinstance(raw, dict) else "not recorded"
+        entries, cad_to_inr, source_date = extract(raw)
         today = date.fromisoformat(a.today) if a.today else date.today()
         print(render(summarize(entries, today), today, cad_to_inr, source_date))
     except Exception as e:

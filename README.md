@@ -24,7 +24,7 @@ Run on the bundled sample data (`--today` pinned so the output is reproducible):
 
 ```
 $ python3 src/payout_tracker.py data/sample.json --today 2026-11-03
-PAYOUT ARRIVAL TRACKER v0.1.0 — 2026-11-03
+PAYOUT ARRIVAL TRACKER v0.1.1 — 2026-11-03
 Rates: CAD→INR 67.97 (checked 2026-10-26; rates are data, not truth)
 
 REALIZED (money that has landed): CAD $336.00 / ₹22,838

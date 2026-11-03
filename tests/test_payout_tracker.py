@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -101,6 +102,133 @@ class SampleRun(unittest.TestCase):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
         self.assertIn("ERROR: file not found", r.stdout)
+
+
+class FiniteNumbers(unittest.TestCase):
+    """P1 regression: NaN / Infinity must never reach a report ($nan / $inf)."""
+
+    def test_nan_and_inf_fields_rejected(self):
+        for kw in ({"balance": float("nan")}, {"realized": float("inf")},
+                   {"threshold": float("inf")}, {"fee_pct": float("nan")},
+                   {"fee_fixed": float("inf")}, {"fx_to_cad": float("nan")}):
+            with self.assertRaises(ValueError, msg=str(kw)):
+                pt.validate(entry(**kw))
+
+    def test_cli_nan_literal_in_json_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text('{"cad_to_inr": 67.97, "entries": [{"platform": "X",'
+                         ' "balance": NaN, "fx_to_cad": 1.0}]}')
+            r = subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), str(p)],
+                               capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ERROR:", r.stdout)
+        self.assertNotIn("$nan", r.stdout)
+
+
+class CadToInrRate(unittest.TestCase):
+    """P2 regression: a zero/negative/non-finite CAD→INR rate must not
+    silently zero (or negate) every ₹ figure in the report."""
+
+    def test_bad_rates_rejected(self):
+        for rate in (0, -5, float("nan"), float("inf")):
+            with self.assertRaises(ValueError, msg=str(rate)):
+                pt.extract({"cad_to_inr": rate, "entries": []})
+
+    def test_cli_zero_rate_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text('{"cad_to_inr": 0, "entries": []}')
+            r = subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), str(p)],
+                               capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("cad_to_inr", r.stdout)
+
+
+class DelayDays(unittest.TestCase):
+    """P3 regression: delay_days must be a non-negative integer —
+    no past arrival dates, no silent truncation of 7.9 to 7."""
+
+    def test_negative_and_fractional_rejected(self):
+        for bad in (-1, 7.9):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                pt.validate(entry(delay_days=bad))
+
+    def test_zero_and_positive_accepted(self):
+        pt.validate(entry(delay_days=0))
+        pt.validate(entry(delay_days=45))
+
+
+class FeeBounds(unittest.TestCase):
+    """Mini-fix regression: fee_pct above 100 and fee_fixed above the balance
+    were silently accepted and clamped to "would land $0.00" — they are
+    data errors and must be rejected, naming the field."""
+
+    def test_fee_pct_above_100_rejected(self):
+        for bad in (100.5, 150, 1000):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                pt.validate(entry(balance=200.0, fee_pct=bad))
+
+    def test_fee_pct_bounds_accepted(self):
+        pt.validate(entry(balance=200.0, fee_pct=0))
+        pt.validate(entry(balance=200.0, fee_pct=100))
+
+    def test_fee_fixed_above_balance_rejected(self):
+        with self.assertRaises(ValueError):
+            pt.validate(entry(balance=10.0, fee_fixed=10.01))
+        with self.assertRaises(ValueError):
+            pt.validate(entry(balance=0.0, fee_fixed=5.0))
+
+    def test_fee_fixed_at_balance_accepted(self):
+        pt.validate(entry(balance=10.0, fee_fixed=10.0))
+        pt.validate(entry(balance=0.0, fee_fixed=0.0))
+
+    def test_cli_errors_name_the_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text('{"entries": [{"platform": "X", "balance": 50,'
+                         ' "threshold": 10, "fee_pct": 150, "fx_to_cad": 1.0}]}')
+            r = subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), str(p)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("ERROR:", r.stdout)
+            self.assertIn("fee_pct", r.stdout)
+            p.write_text('{"entries": [{"platform": "X", "balance": 50,'
+                         ' "threshold": 10, "fee_fixed": 999, "fx_to_cad": 1.0}]}')
+            r = subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), str(p)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("ERROR:", r.stdout)
+            self.assertIn("fee_fixed", r.stdout)
+
+
+class StructuralErrors(unittest.TestCase):
+    """P4 regression: malformed files say what to fix — never a raw
+    KeyError ('entries') or AttributeError ('str' object has no attribute)."""
+
+    def _run(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text(text)
+            return subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), str(p)],
+                                  capture_output=True, text=True)
+
+    def test_missing_entries_key(self):
+        r = self._run('{"cad_to_inr": 67.97}')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ERROR:", r.stdout)
+        self.assertIn('"entries"', r.stdout)
+
+    def test_entries_not_a_list(self):
+        r = self._run('{"entries": "nope"}')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("must be a list", r.stdout)
+
+    def test_entry_not_an_object(self):
+        r = self._run('{"entries": ["just a string"]}')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("entry #1", r.stdout)
+        self.assertNotIn("has no attribute", r.stdout)
 
 
 if __name__ == "__main__":
