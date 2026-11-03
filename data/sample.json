@@ -1,0 +1,5 @@
+{"cad_to_inr": 67.97, "rates_date": "2026-10-26", "entries": [
+ {"platform":"YouTube (AdSense)","currency":"USD","balance":132.40,"realized":0,"threshold":100,"fee_pct":0,"fee_fixed":0,"fx_to_cad":1.40,"delay_days":21,"note":"monthly cycle"},
+ {"platform":"Gumroad","currency":"USD","balance":37.50,"realized":0,"threshold":100,"fee_pct":10,"fee_fixed":0.50,"fx_to_cad":1.40,"delay_days":7},
+ {"platform":"Adobe Stock","currency":"USD","balance":61.00,"realized":240.00,"threshold":25,"fee_pct":0,"fee_fixed":0,"fx_to_cad":1.40,"delay_days":45,"note":"one payout already landed last quarter"}
+]}
