@@ -231,5 +231,61 @@ class StructuralErrors(unittest.TestCase):
         self.assertNotIn("has no attribute", r.stdout)
 
 
+class JsonOutput(unittest.TestCase):
+    """v0.2.0: --json gives agents one JSON object with the same totals,
+    rows and exit codes as the text report; errors are {"error": ...}."""
+
+    def _run(self, *argv):
+        return subprocess.run([sys.executable, str(ROOT / "src" / "payout_tracker.py"), *argv],
+                              capture_output=True, text=True)
+
+    def test_json_parses_with_verdict_fields(self):
+        r = self._run(str(ROOT / "data" / "sample.json"), "--today", "2026-11-03", "--json")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out["tool"], "payout-tracker")
+        self.assertEqual(out["version"], pt.VERSION)
+        self.assertAlmostEqual(out["totals"]["realized"]["cad"], 336.00)
+        self.assertAlmostEqual(out["totals"]["payable"]["cad"], 270.76)
+        self.assertAlmostEqual(out["totals"]["stuck"]["cad"], 52.50)
+        buckets = {row["platform"]: row["bucket"] for row in out["rows"]}
+        self.assertEqual(buckets["Gumroad"], "STUCK")
+        self.assertEqual(buckets["YouTube (AdSense)"], "PAYABLE")
+        self.assertEqual(buckets["Adobe Stock"], "PAYABLE")
+        gumroad = next(row for row in out["rows"] if row["platform"] == "Gumroad")
+        self.assertAlmostEqual(gumroad["distance_to_threshold"]["cad"], 87.50)
+        youtube = next(row for row in out["rows"] if row["platform"] == "YouTube (AdSense)")
+        self.assertEqual(youtube["arrival"], "2026-11-24")
+
+    def test_json_agrees_with_human_report(self):
+        sample = str(ROOT / "data" / "sample.json")
+        human = self._run(sample, "--today", "2026-11-03")
+        machine = self._run(sample, "--today", "2026-11-03", "--json")
+        self.assertEqual(human.returncode, machine.returncode)
+        self.assertIn("REALIZED (money that has landed): CAD $336.00", human.stdout)
+        out = json.loads(machine.stdout)
+        self.assertAlmostEqual(out["totals"]["realized"]["cad"], 336.00)
+        # The honesty trap holds in JSON too: balances never leak into realized.
+        # (336.00 x 67.97 exactly; the text report rounds this to ₹22,838.)
+        self.assertAlmostEqual(out["totals"]["realized"]["inr"], 22837.92)
+
+    def test_json_missing_file_is_json_error(self):
+        r = self._run("nope.json", "--json")
+        self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)  # parses — never plain text, never a traceback
+        self.assertIn("error", out)
+        self.assertIn("file not found", out["error"])
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_json_bad_data_is_json_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text('{"cad_to_inr": 0, "entries": []}')
+            r = self._run(str(p), "--json")
+        self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertIn("cad_to_inr", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

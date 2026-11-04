@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Payout Arrival Tracker v0.1.2 — Canada-first, local/offline.
+Payout Arrival Tracker v0.2.0 — Canada-first, local/offline.
 
 One job: never let a platform BALANCE be mistaken for MONEY.
 Every figure is sorted into exactly one bucket:
@@ -13,14 +13,17 @@ Input: a JSON file of platform entries (see data/sample.json).
 Output: a text report; every total in CAD + INR.
 No network, no accounts, no scraping. Python 3 stdlib only. Spend: none.
 
-Usage: python3 payout_tracker.py DATA.json [--today YYYY-MM-DD]
+Usage: python3 payout_tracker.py DATA.json [--today YYYY-MM-DD] [--json]
+With --json, one JSON object is printed instead of the text report
+(same totals, same rows, same exit codes; errors become {"error": ...}).
 Exit codes: 0 ok, 1 error.
 """
 import argparse, json, math, sys
 from datetime import date, timedelta
 from pathlib import Path
 
-VERSION = "0.1.2"
+VERSION = "0.2.0"
+TOOL = "payout-tracker"
 
 
 def _num(entry, key, default=0.0):
@@ -151,6 +154,44 @@ def render(summary, today, cad_to_inr, source_date):
     return "\n".join(L)
 
 
+def _money_pair(cad, cad_to_inr):
+    return {"cad": round(cad, 2), "inr": round(cad * cad_to_inr, 2)}
+
+
+def render_json(summary, today, cad_to_inr, source_date):
+    """The same report as render(), as one JSON object for agent callers.
+
+    Buckets and totals are identical to the text report. REALIZED is
+    money that has landed; PAYABLE / STUCK / UNKNOWN are balances and
+    must never be reported as income (see SKILL.md).
+    """
+    rows = []
+    for r in sorted(summary["rows"], key=lambda r: (r["bucket"], r["platform"])):
+        rows.append({
+            "platform": r["platform"], "currency": r["currency"], "bucket": r["bucket"],
+            "balance": _money_pair(r["balance_cad"], cad_to_inr),
+            "realized": _money_pair(r["realized_cad"], cad_to_inr),
+            "payable": _money_pair(r["payable_cad"], cad_to_inr),
+            "distance_to_threshold": (_money_pair(r["distance_cad"], cad_to_inr)
+                                      if r["distance_cad"] is not None else None),
+            "arrival": r["arrival"].isoformat() if r["arrival"] else None,
+            "note": r["note"],
+        })
+    return json.dumps({
+        "tool": TOOL, "version": VERSION, "date": today.isoformat(),
+        "cad_to_inr": cad_to_inr, "rates_date": source_date,
+        "totals": {
+            "realized": _money_pair(summary["realized_cad"], cad_to_inr),
+            "payable": _money_pair(summary["payable_cad"], cad_to_inr),
+            "stuck": _money_pair(summary["stuck_cad"], cad_to_inr),
+            "unknown": _money_pair(summary["unknown_cad"], cad_to_inr),
+        },
+        "rows": rows,
+        "warnings": [],
+        "rule": "a balance is not money until it lands",
+    }, indent=2)
+
+
 def extract(raw):
     """Pull (entries, cad_to_inr, rates_date) out of the parsed JSON.
     Structural problems get an error that says what to fix."""
@@ -178,23 +219,35 @@ def extract(raw):
     return entries, cad_to_inr, source_date
 
 
+def _fail(message, as_json):
+    if as_json:
+        print(json.dumps({"error": message}))
+    else:
+        print(f"ERROR: {message}")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="Payout Arrival Tracker — realized vs balance, Canada-first")
     ap.add_argument("data")
     ap.add_argument("--today", help="YYYY-MM-DD override (for tests)")
+    ap.add_argument("--json", action="store_true",
+                    help="print one JSON object instead of the text report")
     a = ap.parse_args()
     path = Path(a.data)
     if not path.exists():
-        print(f"ERROR: file not found: {path}")
-        return 1
+        return _fail(f"file not found: {path}", a.json)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         entries, cad_to_inr, source_date = extract(raw)
         today = date.fromisoformat(a.today) if a.today else date.today()
-        print(render(summarize(entries, today), today, cad_to_inr, source_date))
+        summary = summarize(entries, today)
+        if a.json:
+            print(render_json(summary, today, cad_to_inr, source_date))
+        else:
+            print(render(summary, today, cad_to_inr, source_date))
     except Exception as e:
-        print(f"ERROR: {e}")
-        return 1
+        return _fail(str(e), a.json)
     return 0
 
 

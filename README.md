@@ -10,6 +10,16 @@ python3 src/payout_tracker.py data/sample.json
 ```
 Your data is one JSON file: per platform — balance, realized (money that has actually landed), payout threshold, fees, FX rate, payout delay. Rates are data: update the file, never the code.
 
+## Use with AI agents
+
+Add `--json` to print one JSON object (same totals, same per-platform rows, same exit codes; errors come back as `{"error": ...}`):
+
+```
+python3 src/payout_tracker.py data/sample.json --json
+```
+
+Agents: read [SKILL.md](SKILL.md) first — commands, the full JSON schema, exit codes, and the honesty rules (a balance is not realized money).
+
 ## Why it's free
 I build free, local-first tools for small and faceless creators from measured failure data on real channels. If this saves you one "wait, that's not spendable?" moment, GitHub Sponsors is LIVE: **[github.com/sponsors/jasveerai88](https://github.com/sponsors/jasveerai88)** — sponsors keep the tools free and fund the next ones. The full version (multi-currency books, templates for Gumroad / Polar / Adobe Stock / YouTube, and the weekly reconciliation format) is a sponsor perk on the Studio tier.
 
@@ -24,7 +34,7 @@ Run on the bundled sample data (`--today` pinned so the output is reproducible):
 
 ```
 $ python3 src/payout_tracker.py data/sample.json --today 2026-11-03
-PAYOUT ARRIVAL TRACKER v0.1.1 — 2026-11-03
+PAYOUT ARRIVAL TRACKER v0.2.0 — 2026-11-03
 Rates: CAD→INR 67.97 (checked 2026-10-26; rates are data, not truth)
 
 REALIZED (money that has landed): CAD $336.00 / ₹22,838

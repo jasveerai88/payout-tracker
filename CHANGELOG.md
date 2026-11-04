@@ -2,6 +2,14 @@
 
 All notable changes to Payout Arrival Tracker are documented here.
 
+## v0.2.0 — 2026-11-03
+
+- Agent-ready release (no behaviour change to the text report):
+  - `--json` flag: prints one JSON object with the same totals and per-platform rows as the text report (tool, version, date, rates, totals, rows with bucket / balances / distance / arrival, warnings, rule). Exit codes unchanged; errors in `--json` mode are `{"error": "..."}` with the same message and exit code — never a traceback, never plain text.
+  - `SKILL.md` added at the repo root for AI coding agents: purpose, when to use / not use, exact commands, the output JSON schema, exit codes, and the honesty rules (a balance is never realized money).
+  - README gained a short "Use with AI agents" section.
+- Tests added for the JSON output (parses, totals and rows agree with the text report, JSON error objects on missing file and invalid data); suite is now 31 tests. Report totals on the bundled sample are unchanged (realized CAD $336.00).
+
 ## v0.1.2 — 2026-11-03
 
 - Mini-fix from the delta re-audit:
